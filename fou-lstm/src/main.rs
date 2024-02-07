@@ -1,49 +1,56 @@
 use candle_core::{DType, Device, Module, Result, Tensor};
 use candle_datasets::Batcher;
 use candle_nn::{
-    linear, AdamW, LSTMConfig, Linear, Optimizer, ParamsAdamW, VarBuilder, VarMap, LSTM, RNN,
+    linear, lstm, AdamW, LSTMConfig, Linear, Optimizer, ParamsAdamW, VarBuilder, VarMap, LSTM, RNN,
 };
 use stochastic_rs::diffusions::ou::fou;
 
 struct Model {
     // num_layers: usize,
-    lstm: Vec<LSTM>,
-    out_layer: Linear,
+    lstm1: LSTM,
+    lstm2: LSTM,
+    linear: Linear,
 }
 
 impl Model {
     #[must_use]
-    fn new(
-        vs: VarBuilder,
-        in_dim: usize,
-        hidden_dim: usize,
-        num_lstm_layers: usize,
-        out_dim: usize,
-    ) -> Result<Self> {
-        let vs = &vs.pp("lstm");
-        let mut lstm_layers = Vec::with_capacity(num_lstm_layers);
-        for layer_idx in 0..num_lstm_layers {
-            let config = LSTMConfig {
-                layer_idx,
+    fn new(vs: VarBuilder, in_dim: usize, hidden_dim: usize, out_dim: usize) -> Result<Self> {
+        let lstm1 = lstm(
+            in_dim,
+            hidden_dim,
+            LSTMConfig {
+                layer_idx: 0,
                 ..Default::default()
-            };
-            let lstm = candle_nn::lstm(in_dim, hidden_dim, config, vs.clone())?;
-            lstm_layers.push(lstm);
-        }
-        let out_layer = linear(hidden_dim, out_dim, vs.clone())?;
+            },
+            vs.pp("lstm1"),
+        )?;
+        println!("lstm1: {:?}", lstm1);
+        let lstm2 = lstm(
+            hidden_dim,
+            hidden_dim,
+            LSTMConfig {
+                layer_idx: 1,
+                ..Default::default()
+            },
+            vs.pp("lstm2"),
+        )?;
+        println!("lstm2: {:?}", lstm2);
+        let linear = linear(hidden_dim, out_dim, vs.clone())?;
+        println!("linear: {:?}", linear);
         Ok(Self {
-            lstm: lstm_layers,
-            out_layer,
+            lstm1,
+            lstm2,
+            linear,
         })
     }
 
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let mut x = x.clone();
-        for layer in &self.lstm {
-            let states = layer.seq(&x)?;
-            x = layer.states_to_tensor(&states)?.unsqueeze(0)?;
-        }
-        let out = self.out_layer.forward(&x)?;
+        let mut x = x.clone().unsqueeze(1)?;
+        let states1 = self.lstm1.seq(&x)?;
+        x = self.lstm1.states_to_tensor(&states1)?;
+        let states2 = self.lstm2.seq(&x.unsqueeze(1)?)?;
+        x = self.lstm2.states_to_tensor(&states2)?;
+        let out = self.linear.forward(&x)?;
         Ok(out)
     }
 }
@@ -54,13 +61,12 @@ fn main() -> anyhow::Result<()> {
     let vs = VarBuilder::from_varmap(&varmap, DType::F64, &device);
 
     let epochs = 25;
-    let epoch_size = 128;
+    let epoch_size = 10_000;
     let in_dim = 1_600_usize;
     let hidden_dim = 64_usize;
-    let num_lstm_layers = 2_usize;
     let out_dim = 1_usize;
     let batch_size = 64_usize;
-    let net = Model::new(vs, in_dim, hidden_dim, num_lstm_layers, out_dim).unwrap();
+    let net = Model::new(vs, in_dim, hidden_dim, out_dim).unwrap();
     let adamw_params = ParamsAdamW::default();
     let mut opt = AdamW::new(varmap.all_vars(), adamw_params)?;
 
@@ -76,7 +82,7 @@ fn main() -> anyhow::Result<()> {
 
         for batch in batcher {
             let input = batch?;
-            let y = net.forward(&input.unsqueeze(0)?)?;
+            let y = net.forward(&input)?;
             let loss = y.mean(0)?;
             opt.backward_step(&loss)?;
             println!("loss: {:?}", loss);
