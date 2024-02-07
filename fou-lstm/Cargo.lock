@@ -800,6 +800,10 @@ dependencies = [
  "candle-core",
  "candle-datasets",
  "candle-nn",
+ "indicatif",
+ "ndarray",
+ "ndarray-rand",
+ "rand_distr",
  "stochastic-rs",
 ]
 
