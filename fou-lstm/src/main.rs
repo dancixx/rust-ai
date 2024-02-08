@@ -1,8 +1,10 @@
+use std::time::Instant;
+
 use candle_core::{DType, Device, Module, Result, Tensor};
 use candle_datasets::Batcher;
 use candle_nn::{
-    linear, loss::mse, lstm, AdamW, LSTMConfig, Linear, Optimizer, ParamsAdamW, VarBuilder, VarMap,
-    LSTM, RNN,
+    linear, loss::mse, lstm, seq, AdamW, LSTMConfig, Optimizer, ParamsAdamW, Sequential,
+    VarBuilder, VarMap, LSTM, RNN,
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -14,33 +16,38 @@ use stochastic_rs::diffusions::ou::fou;
 struct Model {
     lstm1: LSTM,
     lstm2: LSTM,
-    linear: Linear,
+    mlp: Sequential,
 }
 
 impl Model {
     #[must_use]
     fn new(vs: VarBuilder, in_dim: usize, hidden_dim: usize, out_dim: usize) -> Result<Self> {
-        Ok(Self {
-            lstm1: lstm(
-                in_dim,
-                hidden_dim,
-                LSTMConfig {
-                    layer_idx: 0,
-                    ..Default::default()
-                },
-                vs.pp("lstm1"),
-            )?,
-            lstm2: lstm(
-                hidden_dim,
-                hidden_dim,
-                LSTMConfig {
-                    layer_idx: 1,
-                    ..Default::default()
-                },
-                vs.pp("lstm2"),
-            )?,
-            linear: linear(hidden_dim, out_dim, vs.clone())?,
-        })
+        let lstm1 = lstm(
+            in_dim,
+            hidden_dim,
+            LSTMConfig {
+                layer_idx: 0,
+                ..Default::default()
+            },
+            vs.pp("lstm-1"),
+        )?;
+        let lstm2 = lstm(
+            hidden_dim,
+            hidden_dim,
+            LSTMConfig {
+                layer_idx: 1,
+                ..Default::default()
+            },
+            vs.pp("lstm-2"),
+        )?;
+        let mlp = seq()
+            .add(linear(hidden_dim, hidden_dim, vs.pp("mpl-linear-1"))?)
+            .add_fn(|x| x.gelu())
+            .add(linear(hidden_dim, hidden_dim, vs.pp("mpl-linear-2"))?)
+            .add_fn(|x| x.gelu())
+            .add(linear(hidden_dim, out_dim, vs.pp("mpl-linear-3"))?);
+
+        Ok(Self { lstm1, lstm2, mlp })
     }
 
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
@@ -49,7 +56,7 @@ impl Model {
         x = self.lstm1.states_to_tensor(&states1)?;
         let states2 = self.lstm2.seq(&x.unsqueeze(1)?)?;
         x = self.lstm2.states_to_tensor(&states2)?;
-        let out = self.linear.forward(&x)?;
+        let out = self.mlp.forward(&x)?;
         Ok(out)
     }
 }
@@ -59,24 +66,28 @@ fn main() -> anyhow::Result<()> {
     let varmap = VarMap::new();
     let vs = VarBuilder::from_varmap(&varmap, DType::F64, &device);
 
-    let epochs = 200;
+    let epochs = 200_usize;
     let epoch_size = 10_000_usize;
-    let in_dim = 1_600_usize;
+    let in_dim = 4_096_usize + 4_usize;
     let hidden_dim = 64_usize;
     let out_dim = 1_usize;
-    let batch_size = 128_usize;
+    let batch_size = 64_usize;
     let net = Model::new(vs, in_dim, hidden_dim, out_dim).unwrap();
     let adamw_params = ParamsAdamW::default();
     let mut opt = AdamW::new(varmap.all_vars(), adamw_params)?;
 
-    let n = 1_600_usize;
-    let hurst = 0.7;
-    let mu = 2.8;
+    let n = 4_096_usize;
+    let _hurst = 0.7;
+    let _mu = 1.0;
     let sigma = 1.0;
+
+    let start = Instant::now();
 
     for epoch in 0..epochs {
         let mut paths = Vec::with_capacity(epoch_size);
-        let thetas = Array1::random(epoch_size, Uniform::new(0.0, 5.0)).to_vec();
+        let thetas = Array1::random(epoch_size, Uniform::new(0.0, 10.0)).to_vec();
+        let hursts = Array1::random(epoch_size, Uniform::new(0.01, 0.99)).to_vec();
+        let mus = Array1::random(epoch_size, Uniform::new(0.5, 3.5)).to_vec();
         let progress_bar = ProgressBar::new(epoch_size as u64);
         progress_bar.set_style(
             ProgressStyle::with_template(
@@ -85,13 +96,16 @@ fn main() -> anyhow::Result<()> {
             .progress_chars("#>-"),
         );
         for idx in 0..epoch_size {
-            let path = fou(hurst, mu, sigma, thetas[idx], n, Some(0.0), Some(1.0));
-            // let mean = path.mean().unwrap();
-            // let std = path.std(0.0);
-            // path = (path - mean) / std;
-            //let path = path.to_vec();
+            let mu = mus[idx];
+            let hurst = hursts[idx];
+            let theta = thetas[idx];
+            let mut path = Array1::from_vec(fou(hurst, mu, sigma, theta, n, Some(0.0), Some(16.0)));
+            let mean = path.mean().unwrap();
+            let std = path.std(0.0);
+            path = (path - mean) / std;
 
-            //path.extend(vec![mu, sigma, hurst]);
+            let mut path = path.to_vec();
+            path.extend(vec![mu, sigma, hurst, theta]);
             paths.push(Ok((
                 Tensor::from_vec(path, &[in_dim], &device)?,
                 Tensor::new(&[thetas[idx]], &device)?,
@@ -120,6 +134,8 @@ fn main() -> anyhow::Result<()> {
                 Err(_) => break 'inner,
             }
         }
+
+        println!("Epoch {} took {:?}", epoch + 1, start.elapsed());
     }
 
     Ok(())
