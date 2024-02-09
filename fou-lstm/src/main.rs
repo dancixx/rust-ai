@@ -1,17 +1,17 @@
-use std::time::Instant;
-
 use candle_core::{DType, Device, Module, Result, Tensor};
 use candle_datasets::Batcher;
 use candle_nn::{
     linear, loss::mse, lstm, seq, AdamW, LSTMConfig, Optimizer, ParamsAdamW, Sequential,
     VarBuilder, VarMap, LSTM, RNN,
 };
-
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::Array1;
 use ndarray_rand::RandomExt;
 use rand_distr::Uniform;
+use std::time::Instant;
 use stochastic_rs::diffusions::ou::fou;
+
+mod datasets;
 
 struct Model {
     lstm1: LSTM,
@@ -66,9 +66,9 @@ fn main() -> anyhow::Result<()> {
     let varmap = VarMap::new();
     let vs = VarBuilder::from_varmap(&varmap, DType::F64, &device);
 
-    let epochs = 200_usize;
-    let epoch_size = 10_000_usize;
-    let in_dim = 4_096_usize + 4_usize;
+    let epochs = 20_usize;
+    let epoch_size = 12_800_usize;
+    let in_dim = 4_096_usize;
     let hidden_dim = 64_usize;
     let out_dim = 1_usize;
     let batch_size = 64_usize;
@@ -78,16 +78,15 @@ fn main() -> anyhow::Result<()> {
 
     let n = 4_096_usize;
     let _hurst = 0.7;
-    let _mu = 1.0;
+    let mu = 2.8;
     let sigma = 1.0;
 
     let start = Instant::now();
 
     for epoch in 0..epochs {
         let mut paths = Vec::with_capacity(epoch_size);
-        let thetas = Array1::random(epoch_size, Uniform::new(0.0, 10.0)).to_vec();
+        let thetas = Array1::random(epoch_size, Uniform::new(0.0, 3.0)).to_vec();
         let hursts = Array1::random(epoch_size, Uniform::new(0.01, 0.99)).to_vec();
-        let mus = Array1::random(epoch_size, Uniform::new(0.5, 3.5)).to_vec();
         let progress_bar = ProgressBar::new(epoch_size as u64);
         progress_bar.set_style(
             ProgressStyle::with_template(
@@ -96,7 +95,6 @@ fn main() -> anyhow::Result<()> {
             .progress_chars("#>-"),
         );
         for idx in 0..epoch_size {
-            let mu = mus[idx];
             let hurst = hursts[idx];
             let theta = thetas[idx];
             let mut path = Array1::from_vec(fou(hurst, mu, sigma, theta, n, Some(0.0), Some(16.0)));
@@ -104,8 +102,8 @@ fn main() -> anyhow::Result<()> {
             let std = path.std(0.0);
             path = (path - mean) / std;
 
-            let mut path = path.to_vec();
-            path.extend(vec![mu, sigma, hurst, theta]);
+            let path = path.to_vec();
+            // path.extend(vec![mu, sigma, hurst, theta]);
             paths.push(Ok((
                 Tensor::from_vec(path, &[in_dim], &device)?,
                 Tensor::new(&[thetas[idx]], &device)?,
@@ -128,12 +126,34 @@ fn main() -> anyhow::Result<()> {
                         "Epoch: {}, Batch: {}, Loss: {:?}",
                         epoch + 1,
                         batch_idx + 1,
-                        loss
+                        loss.to_scalar::<f64>()?
                     );
                 }
                 Err(_) => break 'inner,
             }
         }
+
+        // let test_dataset = datasets::test_vasicek(1000, in_dim, batch_size, n, &device)?;
+        // 'test: for batch in test_dataset {
+        //     match batch {
+        //         Ok((x, target)) => {
+        //             let inp = net.forward(&x)?;
+        //             let inp_vec = inp
+        //                 .to_vec2::<f64>()?
+        //                 .into_iter()
+        //                 .flatten()
+        //                 .collect::<Vec<_>>();
+        //             let target_vec = target
+        //                 .to_vec2::<f64>()?
+        //                 .into_iter()
+        //                 .flatten()
+        //                 .collect::<Vec<_>>();
+        //             let zip = inp_vec.iter().zip(target_vec.iter()).collect::<Vec<_>>();
+        //             println!("result: {:?}", zip);
+        //         }
+        //         Err(_) => break 'test,
+        //     }
+        // }
 
         println!("Epoch {} took {:?}", epoch + 1, start.elapsed());
     }

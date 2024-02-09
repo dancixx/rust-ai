@@ -7,9 +7,10 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.79"
-candle-core = "0.3.3"
-candle-datasets = "0.3.3"
-candle-nn = "0.3.3"
+candle-core = {version = "0.3.3", features = ["accelerate", "metal"]}
+candle-datasets = {version = "0.3.3"}
+candle-metal-kernels = "0.3.3"
+candle-nn = {version = "0.3.3", features = ["accelerate", "metal"]}
 indicatif = "0.17.7"
 ndarray = "0.15.6"
 ndarray-rand = "0.14.0"
