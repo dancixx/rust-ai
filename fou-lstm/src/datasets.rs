@@ -14,7 +14,10 @@ pub fn test_vasicek(
     batch_size: usize,
     n: usize,
     device: &Device,
-) -> Result<Batcher<IterResult2<IntoIter<Result<(Tensor, Tensor), candle_core::Error>>>>> {
+) -> Result<(
+    Batcher<IterResult2<IntoIter<Result<(Tensor, Tensor), candle_core::Error>>>>,
+    Vec<f64>,
+)> {
     let mut paths = Vec::with_capacity(epoch_size);
     let mu = 2.8;
     let sigma = 1.0;
@@ -49,5 +52,5 @@ pub fn test_vasicek(
         .batch_size(batch_size)
         .return_last_incomplete_batch(false);
 
-    Ok(batcher)
+    Ok((batcher, hursts))
 }
