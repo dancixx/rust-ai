@@ -3,7 +3,7 @@ use candle_datasets::Batcher;
 use candle_nn::{
     layer_norm, linear, loss::mse, lstm, prelu, seq, AdamW, Dropout, LSTMConfig, LayerNorm,
     LayerNormConfig, Linear, Optimizer, PReLU, ParamsAdamW, Sequential, VarBuilder, VarMap, LSTM,
-    RNN, SGD,
+    RNN,
 };
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::Array1;
@@ -29,7 +29,7 @@ struct Model {
 }
 
 impl Model {
-    #[must_use]
+    #[must_use = "new is necessary to create a new instance of Model"]
     fn new(
         vs: VarBuilder,
         in_dim: usize,
@@ -117,7 +117,7 @@ fn main() -> anyhow::Result<()> {
     let hidden_dim = 64_usize;
     let out_dim = 1_usize;
     let batch_size = 64;
-    let net = Model::new(
+    let mut net = Model::new(
         vs,
         in_dim,
         hidden_dim,
@@ -138,14 +138,14 @@ fn main() -> anyhow::Result<()> {
 
     let n = 1600_usize;
     let _hurst = 0.7;
-    let mu = 5.8;
+    let mu = 2.8;
     let sigma = 1.0;
 
     let start = Instant::now();
 
     for epoch in 0..epochs {
         let mut paths = Vec::with_capacity(epoch_size);
-        let thetas = Array1::random(epoch_size, Uniform::new(1.0, 5.0)).to_vec();
+        let thetas = Array1::random(epoch_size, Uniform::new(0.0, 5.0)).to_vec();
         let hursts = Array1::random(epoch_size, Uniform::new(0.01, 0.99)).to_vec();
         let progress_bar = ProgressBar::new(epoch_size as u64);
         progress_bar.set_style(
@@ -157,13 +157,13 @@ fn main() -> anyhow::Result<()> {
         for idx in 0..epoch_size {
             let hurst = hursts[idx];
             let theta = thetas[idx];
-            let mut path = Array1::from_vec(fou(hurst, mu, sigma, theta, n, Some(0.0), Some(16.0)));
+            let mut path =
+                Array1::from_vec(fou(hurst, mu, sigma, theta, n, Some(10.0), Some(16.0)));
             let mean = path.mean().unwrap();
             let std = path.std(0.0);
             path = (path - mean) / std;
 
             let path = path.to_vec();
-            // path.extend(vec![mu, sigma, hurst, theta]);
             paths.push(Ok((
                 Tensor::from_vec(path, &[in_dim], &device)?,
                 Tensor::new(&[thetas[idx]], &device)?,
@@ -193,30 +193,10 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        // let test_dataset = datasets::test_vasicek(1000, in_dim, batch_size, n, &device)?;
-        // 'test: for batch in test_dataset {
-        //     match batch {
-        //         Ok((x, target)) => {
-        //             let inp = net.forward(&x)?;
-        //             let inp_vec = inp
-        //                 .to_vec2::<f64>()?
-        //                 .into_iter()
-        //                 .flatten()
-        //                 .collect::<Vec<_>>();
-        //             let target_vec = target
-        //                 .to_vec2::<f64>()?
-        //                 .into_iter()
-        //                 .flatten()
-        //                 .collect::<Vec<_>>();
-        //             let zip = inp_vec.iter().zip(target_vec.iter()).collect::<Vec<_>>();
-        //             println!("result: {:?}", zip);
-        //         }
-        //         Err(_) => break 'test,
-        //     }
-        // }
-
         println!("Epoch {} took {:?}", epoch + 1, start.elapsed());
     }
+
+    net.eval();
 
     // test the model
     let (batcher, hursts) = datasets::test_vasicek(epoch_size, in_dim, batch_size, n, &device)?;
@@ -253,7 +233,7 @@ fn main() -> anyhow::Result<()> {
         "hurst" => hursts
     )?;
 
-    let writer = File::create("vasicek_hurst=0.01..0.99_alpha=0.0..5.0.csv")?;
+    let writer = File::create("vasicek_hurst=0.01..0.99_alpha=1.0..5.0_init=10.0.csv")?;
     let mut csv_writer = CsvWriter::new(writer);
     csv_writer.finish(&mut dataframe)?;
 
