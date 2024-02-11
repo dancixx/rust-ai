@@ -9,9 +9,8 @@ use std::vec::IntoIter;
 use stochastic_rs::diffusions::ou::fou;
 
 #[allow(clippy::type_complexity)]
-pub fn test_vasicek(
+pub fn test_vasicek_1_d(
     epoch_size: usize,
-    in_dim: usize,
     batch_size: usize,
     n: usize,
     device: &Device,
@@ -22,7 +21,7 @@ pub fn test_vasicek(
     let mut paths = Vec::with_capacity(epoch_size);
     let mu = 2.8;
     let sigma = 1.0;
-    let thetas = Array1::random(epoch_size, Uniform::new(0.0, 5.0)).to_vec();
+    let thetas = Array1::random(epoch_size, Uniform::new(0.0, 10.0)).to_vec();
     let hursts = Array1::random(epoch_size, Uniform::new(0.01, 0.99)).to_vec();
     let progress_bar = ProgressBar::new(epoch_size as u64);
     progress_bar.set_style(
@@ -34,15 +33,13 @@ pub fn test_vasicek(
     for idx in 0..epoch_size {
         let hurst = hursts[idx];
         let theta = thetas[idx];
-        let mut path = Array1::from_vec(fou(hurst, mu, sigma, theta, n, Some(10.0), Some(16.0)));
+        let mut path = Array1::from_vec(fou(hurst, mu, sigma, theta, n, Some(0.0), Some(16.0)));
         let mean = path.mean().unwrap();
         let std = path.std(0.0);
         path = (path - mean) / std;
 
-        let path = path.to_vec();
-        // path.extend(vec![mu, sigma, hurst, theta]);
         paths.push(Ok((
-            Tensor::from_vec(path, &[in_dim], device)?,
+            Tensor::from_iter(path, device)?,
             Tensor::new(&[thetas[idx]], device)?,
         )));
         progress_bar.inc(1);
