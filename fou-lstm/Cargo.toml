@@ -11,6 +11,7 @@ candle-core = {version = "0.3.3", features = ["accelerate", "metal"]}
 candle-datasets = {version = "0.3.3"}
 candle-metal-kernels = "0.3.3"
 candle-nn = {version = "0.3.3", features = ["accelerate", "metal"]}
+clap = { version = "4.5.0", features = ["derive"] }
 indicatif = "0.17.7"
 ndarray = "0.15.6"
 ndarray-rand = "0.14.0"

@@ -26,14 +26,14 @@ impl Model {
     #[must_use = "new is necessary to create a new instance of Model"]
     pub fn new(
         vs: VarBuilder,
-        in_dim: usize,
+        lstm_features: usize,
         hidden_dim: usize,
         out_dim: usize,
         num_lstm_layers: Option<usize>,
         use_dropout: Option<bool>,
         droput_rate: Option<f32>,
     ) -> Result<Self> {
-        let linear1 = linear(in_dim, hidden_dim, vs.pp("linear-1"))?;
+        let linear1 = linear(lstm_features, hidden_dim, vs.pp("linear-1"))?;
         let linear2 = linear(hidden_dim, hidden_dim, vs.pp("linear-2"))?;
         let dropout = Dropout::new(droput_rate.unwrap_or(0.25));
         let prelu = prelu(None, vs.pp("prelu"))?;
@@ -107,13 +107,13 @@ pub fn test() -> anyhow::Result<()> {
 
     let epochs = 50_usize;
     let epoch_size = 12_800_usize;
-    let in_dim = 1600_usize;
+    let lstm_features = 1_600_usize;
     let hidden_dim = 64_usize;
     let out_dim = 1_usize;
     let batch_size = 64;
     let mut net = Model::new(
         vs,
-        in_dim,
+        lstm_features,
         hidden_dim,
         out_dim,
         Some(3),
